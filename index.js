@@ -9,14 +9,18 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
+// Working directory the headless Pi daemon runs in. Change as needed.
+const RPC_CWD = process.cwd();
+
 // pi --provider nano-gpt --model tencent/hy3 --mode rpc
 // 2. Spawn the continuous headless Pi Agent daemon
-//const piProcess = spawn("pi", ["--mode", "rpc"]);
-const piProcess = spawn("pi", ["--mode", "rpc", "--provider", "nano-gpt", "--model", "tencent/hy3"]);
-//const piProcess = spawn("pi", ["--mode", "rpc"]);
-let rpcResolveCallback = null;
+//const piProcess = spawn("pi", ["--mode", "rpc"], { cwd: RPC_CWD });
+const piProcess = spawn("pi", ["--mode", "rpc", "--provider", "nano-gpt", "--model", "tencent/hy3"], { cwd: RPC_CWD });
+//const piProcess = spawn("pi", ["--mode", "rpc"], { cwd: RPC_CWD });
 
-// Resolve a pending tool execution once the agent finishes its turn
+// Single shared resolver. Each RPC call installs its own handler so concurrent
+// tools don't clobber each other.
+let rpcResolveCallback = null;
 let lastAssistantMessage = null;
 
 // Turn an assistant message into readable text for the MCP response
@@ -45,18 +49,48 @@ piProcess.stdout.on("data", (data) => {
         lastAssistantMessage = response.message;
       }
 
-      // The `response` event with command:"prompt" is only the prompt ACK —
-      // NOT the answer. Resolve only when the turn/agent completes.
-      if ((response.type === "turn_end" || response.type === "agent_end") && rpcResolveCallback) {
-        rpcResolveCallback(lastAssistantMessage || response);
-        rpcResolveCallback = null;
-        lastAssistantMessage = null;
-      }
+      // Hand every parsed event to the active resolver (if any)
+      if (rpcResolveCallback) rpcResolveCallback(response);
     } catch (err) {
       // Catch structural streaming fragment noises safely
     }
   }
 });
+
+// Resolve when the turn/session completes
+function isCompletion(response) {
+  return response.type === "turn_end" || response.type === "agent_end";
+}
+
+// Send a structured prompt and resolve with the formatted assistant answer
+function sendRpc(payload) {
+  return new Promise((resolve, reject) => {
+    rpcResolveCallback = (response) => {
+      if (isCompletion(response)) {
+        rpcResolveCallback = null;
+        const msg = lastAssistantMessage;
+        lastAssistantMessage = null;
+        resolve(msg);
+      }
+    };
+    piProcess.stdin.write(JSON.stringify(payload) + "\n");
+  });
+}
+
+// Send a raw/bespoke RPC command and return the full raw JSONL event stream
+function sendRpcRaw(payload) {
+  const captured = [];
+  return new Promise((resolve) => {
+    rpcResolveCallback = (response) => {
+      captured.push(response);
+      if (isCompletion(response)) {
+        rpcResolveCallback = null;
+        resolve(captured);
+      }
+    };
+    piProcess.stdin.write(JSON.stringify(payload) + "\n");
+  });
+}
 
 // 3. Define available tools to the MCP client ecosystem
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -71,32 +105,52 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["text"]
       }
+    },
+    {
+      name: "pi_agent_rpc",
+      description: "Send a raw, bespoke RPC command straight to the headless Pi process, verbatim. " +
+        "Pass a JSON string payload (e.g. '{\"id\":\"req-1\",\"type\":\"prompt\",\"message\":\"Hello, world!\"}'). " +
+        "Returns the raw JSONL event stream captured until the turn/session ends.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          command: {
+            type: "string",
+            description: "Raw RPC JSON payload to forward verbatim to the Pi daemon's stdin."
+          }
+        },
+        required: ["command"]
+      }
     }
   ]
 }));
 
 // 4. Handle incoming operational requests programmatically
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name !== "pi_agent_prompt") {
-    throw new Error(`Tool not found: ${request.params.name}`);
+  if (request.params.name === "pi_agent_prompt") {
+    const { text } = request.params.arguments;
+    const payload = { type: "prompt", message: text };
+    const result = await sendRpc(payload);
+    return {
+      content: [{ type: "text", text: result ? formatAssistantContent(result) : "(no response)" }]
+    };
   }
 
-  const { text } = request.params.arguments;
+  if (request.params.name === "pi_agent_rpc") {
+    const { command } = request.params.arguments;
+    let payload;
+    try {
+      payload = JSON.parse(command);
+    } catch (err) {
+      throw new Error(`Invalid JSON in 'command': ${err.message}`);
+    }
+    const stream = await sendRpcRaw(payload);
+    return {
+      content: [{ type: "text", text: JSON.stringify(stream, null, 2) }]
+    };
+  }
 
-  // Format strict minimized single-line JSONL payloads for the underlying daemon
-  const payload = { 
-    type: "prompt", 
-    message: text 
-  };
-
-  const result = await new Promise((resolve) => {
-    rpcResolveCallback = resolve;
-    piProcess.stdin.write(JSON.stringify(payload) + "\n");
-  });
-
-  return {
-    content: [{ type: "text", text: result ? formatAssistantContent(result) : JSON.stringify(result, null, 2) }]
-  };
+  throw new Error(`Tool not found: ${request.params.name}`);
 });
 
 // 5. Connect the operational standard IO pathways

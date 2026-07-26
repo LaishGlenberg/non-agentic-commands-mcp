@@ -12,11 +12,17 @@ const server = new Server(
 // Working directory the headless Pi daemon runs in. Change as needed.
 const RPC_CWD = process.cwd();
 
-// pi --provider nano-gpt --model tencent/hy3 --mode rpc
-// 2. Spawn the continuous headless Pi Agent daemon
-//const piProcess = spawn("pi", ["--mode", "rpc"], { cwd: RPC_CWD });
-const piProcess = spawn("pi", ["--mode", "rpc", "--provider", "nano-gpt", "--model", "tencent/hy3"], { cwd: RPC_CWD });
-//const piProcess = spawn("pi", ["--mode", "rpc"], { cwd: RPC_CWD });
+// 2. Spawn the continuous headless Pi Agent daemon.
+// If PI_AGENT_SESSION env var is set, pass --session to resume that session.
+const sessionArg = process.env.PI_AGENT_SESSION
+  ? ["--session", process.env.PI_AGENT_SESSION]
+  : [];
+const piProcess = spawn("pi", [
+  "--mode", "rpc",
+  "--provider", "nano-gpt",
+  "--model", "tencent/hy3",
+  ...sessionArg
+], { cwd: RPC_CWD });
 
 // Single shared resolver. Each RPC call installs its own handler so concurrent
 // tools don't clobber each other.
@@ -97,7 +103,7 @@ function sendRpcRaw(payload) {
         debounceTimer = setTimeout(() => {
           rpcResolveCallback = null;
           resolve(captured);
-        }, 8000);
+        }, 500);
       }
     };
     piProcess.stdin.write(JSON.stringify(payload) + "\n");
@@ -133,6 +139,36 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         },
         required: ["command"]
       }
+    },
+    {
+      name: "pi_session_info",
+      description: "Get current session state from the headless Pi daemon (session ID, file path, model, etc.).",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      }
+    },
+    {
+      name: "pi_session_switch",
+      description: "Reconnect to a different session file at runtime. Loads a previous session so prompts continue from that context.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          sessionPath: {
+            type: "string",
+            description: "Path to the session .jsonl file to switch to (e.g. /home/user/.pi/agent/sessions/.../session.jsonl)"
+          }
+        },
+        required: ["sessionPath"]
+      }
+    },
+    {
+      name: "pi_session_new",
+      description: "Start a fresh session in the headless Pi daemon.",
+      inputSchema: {
+        type: "object",
+        properties: {}
+      }
     }
   ]
 }));
@@ -159,6 +195,44 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const stream = await sendRpcRaw(payload);
     return {
       content: [{ type: "text", text: JSON.stringify(stream, null, 2) }]
+    };
+  }
+
+  if (request.params.name === "pi_session_info") {
+    const stream = await sendRpcRaw({ type: "get_state" });
+    const responseEvent = stream.find(e => e.type === "response" && e.command === "get_state");
+    const data = responseEvent?.data || {};
+    return {
+      content: [{ type: "text", text: JSON.stringify(data, null, 2) }]
+    };
+  }
+
+  if (request.params.name === "pi_session_switch") {
+    const { sessionPath } = request.params.arguments;
+    const stream = await sendRpcRaw({ type: "switch_session", sessionPath });
+    const responseEvent = stream.find(e => e.type === "response" && e.command === "switch_session");
+    const cancelled = responseEvent?.data?.cancelled;
+    if (cancelled) {
+      return {
+        content: [{ type: "text", text: "Session switch was cancelled by an extension." }]
+      };
+    }
+    return {
+      content: [{ type: "text", text: `Switched to session: ${sessionPath}` }]
+    };
+  }
+
+  if (request.params.name === "pi_session_new") {
+    const stream = await sendRpcRaw({ type: "new_session" });
+    const responseEvent = stream.find(e => e.type === "response" && e.command === "new_session");
+    const cancelled = responseEvent?.data?.cancelled;
+    if (cancelled) {
+      return {
+        content: [{ type: "text", text: "New session was cancelled by an extension." }]
+      };
+    }
+    return {
+      content: [{ type: "text", text: "Started a fresh session." }]
     };
   }
 

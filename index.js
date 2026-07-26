@@ -77,15 +77,27 @@ function sendRpc(payload) {
   });
 }
 
-// Send a raw/bespoke RPC command and return the full raw JSONL event stream
+// Send a raw/bespoke RPC command and return the full raw JSONL event stream.
+// Resolves on turn_end/agent_end (prompt-based commands) OR after 500ms of
+// inactivity (non-turn commands like export/config that don't create turns).
 function sendRpcRaw(payload) {
   const captured = [];
+  let debounceTimer = null;
   return new Promise((resolve) => {
     rpcResolveCallback = (response) => {
       captured.push(response);
+      if (debounceTimer) clearTimeout(debounceTimer);
       if (isCompletion(response)) {
         rpcResolveCallback = null;
         resolve(captured);
+      } else {
+        // Debounce: if no more events arrive within 500ms, consider it done.
+        // This handles non-turn commands (export, config, etc.) that don't
+        // emit turn_end/agent_end.
+        debounceTimer = setTimeout(() => {
+          rpcResolveCallback = null;
+          resolve(captured);
+        }, 8000);
       }
     };
     piProcess.stdin.write(JSON.stringify(payload) + "\n");

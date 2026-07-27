@@ -118,8 +118,8 @@ function spawnPi(extraArgs) {
     rpcResolveCallback = null;
     lastAssistantMessage = null;
   }
-  pendingRestartConfirm = false;
-  piProcess = spawn("pi", extraArgs, { cwd: RPC_CWD });
+  pendingRestartConfirm = false;// planner doesnt need to know the cwd
+  piProcess = spawn("pi", extraArgs, /* { cwd: RPC_CWD } */);
   attachStdoutHandlers(piProcess);
   piProcess.on("exit", () => {
     piProcess = null;
@@ -297,6 +297,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "pi_session_new",
       description: "Start a fresh session in the running Pi daemon.",
       inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "export_html",
+      description: "Export the current Pi session as an HTML file. " +
+        "Optionally provide an output path; defaults to /tmp/session.html. ",
+      inputSchema: {
+        type: "object",
+        properties: {
+          outputPath: {
+            type: "string",
+            description: "Path to write the HTML export. Defaults to /tmp/session.html."
+          }
+        }
+      }
     }
   ]
 }));
@@ -386,6 +400,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const cancelled = stream.find(e => e.type === "response" && e.command === "new_session")?.data?.cancelled;
     return {
       content: [{ type: "text", text: cancelled ? "New session cancelled." : "Started a fresh session." }]
+    };
+  }
+
+  if (request.params.name === "export_html") {
+    const outputPath = request.params.arguments?.outputPath || "/tmp/session.html";
+    const stream = await sendRpcRaw({ type: "export_html", outputPath });
+    const cancelled = stream.find(e => e.type === "response" && e.command === "export_html")?.data?.cancelled;
+    return {
+      content: [{ type: "text", text: cancelled ? "HTML export cancelled." : `Session exported to: ${outputPath}` }]
     };
   }
 

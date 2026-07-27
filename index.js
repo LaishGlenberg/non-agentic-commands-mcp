@@ -49,8 +49,7 @@ const AGENT_SYSTEM_PROMPT = `
 // Index into these arrays to swap providers/models without retyping in DEFAULT_PI_ARGS.
 const PROVIDERS = [
   "deepseek", // 0
-  "deepseek", // 1
-  "nano-gpt", // 2
+  "nano-gpt", // 1
 ];
 const MODELS = [
   "deepseek/deepseek-v4-pro", // 0
@@ -70,7 +69,7 @@ function flattenPrompt(prompt) {
 
 // Default args used by start_session
 const DEFAULT_PI_ARGS = [ //"tencent/hy3"  //"deepseek/deepseek-v4-pro"
-  "--mode", "rpc", "--provider", PROVIDERS[0], "--model", MODELS[1], 
+  "--mode", "rpc", "--provider", PROVIDERS[0], "--model", MODELS[0], 
   "--no-tools", "--no-extensions", "--no-skills", "--no-context-files",
   "--system-prompt",
   flattenPrompt(AGENT_SYSTEM_PROMPT)
@@ -150,13 +149,15 @@ function ensurePiRunning() {
 }
 
 // ── RPC helpers ──────────────────────────────────────────────────────────
-function formatAssistantContent(message) {
+function formatAssistantContent(message, includeThinking = false) {
   if (!message || !Array.isArray(message.content)) return "";
   const parts = [];
   for (const c of message.content) {
     if (c.type === "text") parts.push(c.text || "");
     else if (c.type === "toolCall") parts.push(`[tool: ${c.name}] ${JSON.stringify(c.arguments)}`);
-    else if (c.type === "thinking") parts.push(`[thinking] ${c.thinking || ""}`);
+    else if (c.type === "thinking") {
+      if (includeThinking) parts.push(`[thinking] ${c.thinking || ""}`);
+    }
     else parts.push(`[${c.type}]`);
   }
   return parts.join("\n");
@@ -247,7 +248,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       inputSchema: {
         type: "object",
         properties: {
-          text: { type: "string", description: "The prompt to send." }
+          text: { type: "string", description: "The prompt to send." },
+          include_thinking: {
+            type: "boolean",
+            description: "Include the model's thinking/reasoning blocks in the response. Default false (stripped)."
+          }
         },
         required: ["text"]
       }
@@ -338,10 +343,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   // All tools below require pi to be already running
   if (request.params.name === "pi_agent_prompt") {
-    const { text } = request.params.arguments;
+    const { text, include_thinking = false } = request.params.arguments;
     const result = await sendRpc({ type: "prompt", message: text });
     return {
-      content: [{ type: "text", text: result ? formatAssistantContent(result) : "(no response)" }]
+      content: [{ type: "text", text: result ? formatAssistantContent(result, include_thinking) : "(no response)" }]
     };
   }
 

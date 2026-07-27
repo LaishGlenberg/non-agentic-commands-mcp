@@ -45,12 +45,35 @@ const AGENT_SYSTEM_PROMPT = `
   each step, whether it needs to be changed or remain the same and give your reasoning + evidence.
 `;
 
+// ── Model registry ──────────────────────────────────────────────────
+// Index into these arrays to swap providers/models without retyping in DEFAULT_PI_ARGS.
+const PROVIDERS = [
+  "deepseek", // 0
+  "deepseek", // 1
+  "nano-gpt", // 2
+];
+const MODELS = [
+  "deepseek/deepseek-v4-pro", // 0
+  "deepseek/deepseek-v4-flash", // 1
+  "tencent/hy3",              // 2
+];
+
+// ── Prompt helpers ───────────────────────────────────────────────────
+// Flatten a multi-line template-string prompt into a single line by
+// replacing newlines (and collapsing runs of whitespace) with spaces.
+function flattenPrompt(prompt) {
+  return prompt
+    .replace(/\r?\n/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Default args used by start_session
-const DEFAULT_PI_ARGS = [
-  "--mode", "rpc", "--provider", "nano-gpt", "--model", "tencent/hy3",
+const DEFAULT_PI_ARGS = [ //"tencent/hy3"  //"deepseek/deepseek-v4-pro"
+  "--mode", "rpc", "--provider", PROVIDERS[0], "--model", MODELS[1], 
   "--no-tools", "--no-extensions", "--no-skills", "--no-context-files",
   "--system-prompt",
-  "You are a helpful assitant for another model. Your job is to assist this model when it comes to planning and implementation details. You are using a more powerful llm model than the worker agent so you should be the one it relies on for important details like patterns, architecture, high level implementation, etc. ## Your Job The worker agent will summarize the problem, context, and its plan. Your job is to recieve its plan, analyze it, think back in your training data to concepts referenced in the workers plan and respond with what you think. You can either agree with the worker agent, or propose updates to its plan, or flat out disagree with the agent and tell it do it or another way. ## What not to do Your purpose is not project specific, or to be a code validator, you shouldn't need to worry about direct implementation details like which files to edit. It is to act as a senior engineer, and nudge the worker in the right direction. Make sure they are using concepts properly, aren't overcomplicating things. It's to make sure there plan is correct and idiomatic, not that their code is correct. ## Last Notes You should analyze each step of the worker agent's plan, when you respond, make sure you reference each step, whether it needs to be changed or remain the same and give your reasoning + evidence. If the user prompts with 'this is a test' or 'hello' then you should just responsd with 'okay' no extra thinking"
+  flattenPrompt(AGENT_SYSTEM_PROMPT)
 ];
 
 // ── Session number resolver ──────────────────────────────────────────────

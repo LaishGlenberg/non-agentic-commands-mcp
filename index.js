@@ -16,9 +16,42 @@ const PI_SESSION_DIR = process.env.PI_SESSION_DIR;
 let piProcess = null;
 let rpcResolveCallback = null;
 let lastAssistantMessage = null;
+let pendingRestartConfirm = false;
+
+// Using one line version passed directly to spawn.sync since this version didn't work.
+const AGENT_SYSTEM_PROMPT = `
+  You are a helpful assitant for another model. Your job is to assist this model when it 
+  comes to planning and implementation details. You are using a more powerful llm model than the
+  worker agent so you should be the one it relies on for important details like patterns, architecture,
+  high level implementation, etc. 
+  
+  ## Your Job
+
+  The worker agent will summarize the problem, context, and its plan. Your job is to recieve its plan,
+  analyze it, think back in your training data to concepts referenced in the workers plan
+  and respond with what you think. You can either agree with the worker agent, or propose updates
+  to its plan, or flat out disagree with the agent and tell it do it or another way.
+
+  ## What not to do
+
+  Your purpose is not project specific, or to be a code validator, you shouldn't need to worry about direct implementation 
+  details like which files to edit. It is to act as a senior engineer, and nudge the worker in the
+  right direction. Make sure they are using concepts properly, aren't overcomplicating things. It's
+  to make sure there plan is correct and idiomatic, not that their code is correct.
+
+  ## Last Notes
+
+  You should analyze each step of the worker agent's plan, when you respond, make sure you reference
+  each step, whether it needs to be changed or remain the same and give your reasoning + evidence.
+`;
 
 // Default args used by start_session
-const DEFAULT_PI_ARGS = ["--mode", "rpc", "--provider", "nano-gpt", "--model", "tencent/hy3"];
+const DEFAULT_PI_ARGS = [
+  "--mode", "rpc", "--provider", "nano-gpt", "--model", "tencent/hy3",
+  "--no-tools", "--no-extensions", "--no-skills", "--no-context-files",
+  "--system-prompt",
+  "You are a helpful assitant for another model. Your job is to assist this model when it comes to planning and implementation details. You are using a more powerful llm model than the worker agent so you should be the one it relies on for important details like patterns, architecture, high level implementation, etc. ## Your Job The worker agent will summarize the problem, context, and its plan. Your job is to recieve its plan, analyze it, think back in your training data to concepts referenced in the workers plan and respond with what you think. You can either agree with the worker agent, or propose updates to its plan, or flat out disagree with the agent and tell it do it or another way. ## What not to do Your purpose is not project specific, or to be a code validator, you shouldn't need to worry about direct implementation details like which files to edit. It is to act as a senior engineer, and nudge the worker in the right direction. Make sure they are using concepts properly, aren't overcomplicating things. It's to make sure there plan is correct and idiomatic, not that their code is correct. ## Last Notes You should analyze each step of the worker agent's plan, when you respond, make sure you reference each step, whether it needs to be changed or remain the same and give your reasoning + evidence. If the user prompts with 'this is a test' or 'hello' then you should just responsd with 'okay' no extra thinking"
+];
 
 // ── Session number resolver ──────────────────────────────────────────────
 // 0 = new session, 1 = most recent, 2 = second most recent, etc.
@@ -63,9 +96,28 @@ function spawnPi(extraArgs) {
     rpcResolveCallback = null;
     lastAssistantMessage = null;
   }
+  pendingRestartConfirm = false;
   piProcess = spawn("pi", extraArgs, { cwd: RPC_CWD });
   attachStdoutHandlers(piProcess);
+  piProcess.on("exit", () => {
+    piProcess = null;
+    pendingRestartConfirm = false;
+    rpcResolveCallback = null;
+    lastAssistantMessage = null;
+  });
   return piProcess;
+}
+
+function guardRestart() {
+  if (piProcess && !piProcess.killed) {
+    if (pendingRestartConfirm) {
+      pendingRestartConfirm = false;
+      return null; // proceed
+    }
+    pendingRestartConfirm = true;
+    return "Session is already running. Are you sure you want to start a new session? Calling this tool again will restart it.";
+  }
+  return null;
 }
 
 function ensurePiRunning() {
@@ -225,6 +277,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // start_session — spawn pi with defaults, optional session number
   if (request.params.name === "start_session") {
+    const warning = guardRestart();
+    if (warning) return { content: [{ type: "text", text: warning }] };
     const sessionNumber = request.params.arguments?.session_number ?? 0;
     const sessionPath = resolveSessionNumber(sessionNumber);
     const extraArgs = [...DEFAULT_PI_ARGS];
@@ -238,6 +292,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   // start_session_custom — spawn pi with user-supplied args, optional session number
   if (request.params.name === "start_session_custom") {
+    const warning = guardRestart();
+    if (warning) return { content: [{ type: "text", text: warning }] };
     const userArgs = (request.params.arguments?.args || "").trimStart();
     const sessionNumber = request.params.arguments?.session_number ?? 0;
     const sessionPath = resolveSessionNumber(sessionNumber);

@@ -5,6 +5,20 @@ import spawn from "cross-spawn";
 import fs from "fs";
 import path from "path";
 
+
+
+// ── Logger ──────────────────────────────────────────────────────────────────
+// Enable via PI_MCP_LOG=error|warn|info|debug. Logs to stderr to avoid
+// interfering with the MCP stdio protocol. Default: off.
+const LOG_LEVELS = { off: 0, error: 1, warn: 2, info: 3, debug: 4 };
+const LOG_LEVEL = LOG_LEVELS[process.env.PI_MCP_LOG] ?? LOG_LEVELS.off;
+
+function log(level, ...args) {
+  if (LOG_LEVELS[level] <= LOG_LEVEL) {
+    console.error(`[pi-mcp:${level}]`, ...args);
+  }
+}
+
 const server = new Server(
   { name: "non-agentic-commands-mcp", version: "1.0.0" },
   { capabilities: { tools: {} } }
@@ -69,7 +83,7 @@ function flattenPrompt(prompt) {
 
 // Default args used by start_session
 const DEFAULT_PI_ARGS = [ //"tencent/hy3"  //"deepseek/deepseek-v4-pro"
-  "--mode", "rpc", "--provider", PROVIDERS[0], "--model", MODELS[0], 
+  "--mode", "rpc", "--provider", PROVIDERS[2], "--model", MODELS[3], 
   "--no-tools", "--no-extensions", "--no-skills", "--no-context-files",
   "--system-prompt",
   flattenPrompt(AGENT_SYSTEM_PROMPT)
@@ -106,7 +120,9 @@ function attachStdoutHandlers(proc) {
           lastAssistantMessage = response.message;
         }
         if (rpcResolveCallback) rpcResolveCallback(response);
-      } catch { /* streaming fragment noise */ }
+      } catch (e) {
+        log("debug", "stdout parse failed (fragment):", e.message);
+      }
     }
   });
 }
@@ -118,14 +134,22 @@ function spawnPi(extraArgs) {
     rpcResolveCallback = null;
     lastAssistantMessage = null;
   }
-  pendingRestartConfirm = false;// planner doesnt need to know the cwd
+  pendingRestartConfirm = false;
+  log("info", "spawning pi with args:", extraArgs.join(" "));
   piProcess = spawn("pi", extraArgs, /* { cwd: RPC_CWD } */);
   attachStdoutHandlers(piProcess);
-  piProcess.on("exit", () => {
+  piProcess.on("exit", (code, signal) => {
+    log("warn", `pi process exited code=${code} signal=${signal}`);
     piProcess = null;
     pendingRestartConfirm = false;
     rpcResolveCallback = null;
     lastAssistantMessage = null;
+  });
+  piProcess.stderr.on("data", (d) => {
+    log("error", "pi stderr:", d.toString());
+  });
+  piProcess.on("error", (err) => {
+    log("error", "pi process error:", err.message);
   });
   return piProcess;
 }
@@ -178,6 +202,7 @@ function sendRpc(payload) {
         resolve(msg);
       }
     };
+    log("debug", "sending RPC:", JSON.stringify(payload).slice(0, 200));
     piProcess.stdin.write(JSON.stringify(payload) + "\n");
   });
 }
@@ -200,6 +225,7 @@ function sendRpcRaw(payload) {
         }, 500);
       }
     };
+    log("debug", "sending raw RPC:", JSON.stringify(payload).slice(0, 200));
     piProcess.stdin.write(JSON.stringify(payload) + "\n");
   });
 }
@@ -209,7 +235,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "start_session",
-      description: "Start a Pi session with default settings (nano-gpt/tencent/hy3). " +
+      description: "Start a Pi session. " +
         "Optionally reconnect to a previous session by number: 0 = new session (default), " +
         "1 = most recent, 2 = second most recent, etc. Requires PI_SESSION_DIR env var for numbered lookups.",
       inputSchema: {
@@ -218,6 +244,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           session_number: {
             type: "number",
             description: "Session: 0 = new (default), 1 = most recent, 2 = second most recent, etc."
+          },
+          provider: {
+            type: "string",
+            description: "LLM provider (default: tencent)"
+          },
+          model: {
+            type: "string",
+            description: "Model identifier (default: tencent/hy3)"
+          },
+          system_prompt: {
+            type: "string",
+            description: "Custom system prompt (overrides default)"
+          },
+          no_session: {
+            type: "boolean",
+            description: "Don't persist session to disk (ephemeral)"
           }
         }
       }
@@ -237,6 +279,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           session_number: {
             type: "number",
             description: "Session: 0 = new (default), 1 = most recent, 2 = second most recent, etc."
+          },
+          no_session: {
+            type: "boolean",
+            description: "Don't persist session to disk (ephemeral)"
           }
         },
         required: ["args"]
@@ -317,13 +363,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 // ── Tool handlers ────────────────────────────────────────────────────────
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  // start_session — spawn pi with defaults, optional session number
+  // start_session — spawn pi with defaults, optional overrides
   if (request.params.name === "start_session") {
     const warning = guardRestart();
     if (warning) return { content: [{ type: "text", text: warning }] };
-    const sessionNumber = request.params.arguments?.session_number ?? 0;
+    const args = request.params.arguments || {};
+    const sessionNumber = args.session_number ?? 0;
     const sessionPath = resolveSessionNumber(sessionNumber);
-    const extraArgs = [...DEFAULT_PI_ARGS];
+    const provider = args.provider || PROVIDERS[0];
+    const model = args.model || MODELS[0];
+    const systemPrompt = args.system_prompt || flattenPrompt(AGENT_SYSTEM_PROMPT);
+    const extraArgs = [
+      "--mode", "rpc",
+      "--model", model,
+      "--no-tools", "--no-extensions", "--no-skills", "--no-context-files",
+      "--system-prompt", systemPrompt
+    ];
+    // Only pass --provider if model doesn't already contain a '/' (provider/model format)
+    if (!model.includes("/")) {
+      extraArgs.splice(2, 0, "--provider", provider);
+    }
+    if (args.no_session) extraArgs.push("--no-session");
     if (sessionPath) extraArgs.push("--session", sessionPath);
     spawnPi(extraArgs);
     const info = sessionPath
@@ -336,8 +396,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   if (request.params.name === "start_session_custom") {
     const warning = guardRestart();
     if (warning) return { content: [{ type: "text", text: warning }] };
-    const userArgs = (request.params.arguments?.args || "").trimStart();
-    const sessionNumber = request.params.arguments?.session_number ?? 0;
+    const callArgs = request.params.arguments || {};
+    const userArgs = (callArgs.args || "").trimStart();
+    const sessionNumber = callArgs.session_number ?? 0;
     const sessionPath = resolveSessionNumber(sessionNumber);
     // Split on whitespace, respecting quoted strings
     const parsedArgs = [];
@@ -347,6 +408,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       parsedArgs.push(m[1] ?? m[2] ?? m[3]);
     }
     const extraArgs = ["--mode", "rpc", ...parsedArgs];
+    if (callArgs.no_session) extraArgs.push("--no-session");
     if (sessionPath) extraArgs.push("--session", sessionPath);
     spawnPi(extraArgs);
     const info = sessionPath
@@ -368,6 +430,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { command } = request.params.arguments;
     let payload;
     try { payload = JSON.parse(command); } catch (err) {
+      log("error", "invalid JSON in pi_agent_rpc command:", err.message);
       throw new Error(`Invalid JSON in 'command': ${err.message}`);
     }
     const stream = await sendRpcRaw(payload);
@@ -412,10 +475,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 
+  log("error", `tool not found: ${request.params.name}`);
   throw new Error(`Tool not found: ${request.params.name}`);
 });
 
 // ── Bootstrap ────────────────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);
+log("info", "MCP server connected, awaiting tool calls");
 console.error("► Pi Agent MCP Server is active. Call start_session to begin.");

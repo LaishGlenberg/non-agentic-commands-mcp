@@ -245,13 +245,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "number",
             description: "Session: 0 = new (default), 1 = most recent, 2 = second most recent, etc."
           },
-          provider: {
-            type: "string",
-            description: "LLM provider (default: tencent)"
-          },
-          model: {
-            type: "string",
-            description: "Model identifier (default: tencent/hy3)"
+          model_list_index: {
+            type: "array",
+            items: { type: "number" },
+            description: "[provider_index, model_index] into PROVIDERS/MODELS arrays (default: [0, 2] = tencent/tencent/hy3)"
           },
           system_prompt: {
             type: "string",
@@ -370,19 +367,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = request.params.arguments || {};
     const sessionNumber = args.session_number ?? 0;
     const sessionPath = resolveSessionNumber(sessionNumber);
-    const provider = args.provider || PROVIDERS[0];
-    const model = args.model || MODELS[0];
+    const [pIdx, mIdx] = args.model_list_index ?? [0, 2];
+    const provider = PROVIDERS[pIdx] ?? PROVIDERS[0];
+    const model = MODELS[mIdx] ?? MODELS[0];
     const systemPrompt = args.system_prompt || flattenPrompt(AGENT_SYSTEM_PROMPT);
     const extraArgs = [
       "--mode", "rpc",
+      "--provider", provider,
       "--model", model,
       "--no-tools", "--no-extensions", "--no-skills", "--no-context-files",
       "--system-prompt", systemPrompt
     ];
-    // Only pass --provider if model doesn't already contain a '/' (provider/model format)
-    if (!model.includes("/")) {
-      extraArgs.splice(2, 0, "--provider", provider);
-    }
     if (args.no_session) extraArgs.push("--no-session");
     if (sessionPath) extraArgs.push("--session", sessionPath);
     spawnPi(extraArgs);

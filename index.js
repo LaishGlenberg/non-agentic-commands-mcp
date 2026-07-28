@@ -83,7 +83,7 @@ function flattenPrompt(prompt) {
 
 // Default args used by start_session
 const DEFAULT_PI_ARGS = [ //"tencent/hy3"  //"deepseek/deepseek-v4-pro"
-  "--mode", "rpc", "--provider", PROVIDERS[2], "--model", MODELS[3], 
+  "--mode", "rpc", "--provider", PROVIDERS[1], "--model", MODELS[2], 
   "--no-tools", "--no-extensions", "--no-skills", "--no-context-files",
   "--system-prompt",
   flattenPrompt(AGENT_SYSTEM_PROMPT)
@@ -248,7 +248,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           model_list_index: {
             type: "array",
             items: { type: "number" },
-            description: "[provider_index, model_index] into PROVIDERS/MODELS arrays (default: [0, 2] = tencent/tencent/hy3)"
+            description: "[provider_index, model_index] into PROVIDERS/MODELS arrays (default: [1, 2] = tencent/tencent/hy3) [0,0]=deepseek-v4-pro [0,1]=ds-v4-flash"
           },
           system_prompt: {
             type: "string",

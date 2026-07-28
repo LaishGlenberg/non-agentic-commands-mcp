@@ -42,7 +42,7 @@ async function runTest() {
         system_prompt: "you are a test agent, respond with hello only, no thinking",
         session_number: 0,
         no_session: true,
-        model_list_index: [2,3]
+        model_list_index: [1,2]
       },
     });
 

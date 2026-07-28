@@ -83,7 +83,7 @@ function flattenPrompt(prompt) {
 
 // Default args used by start_session
 const DEFAULT_PI_ARGS = [ //"tencent/hy3"  //"deepseek/deepseek-v4-pro"
-  "--mode", "rpc", "--provider", PROVIDERS[1], "--model", MODELS[2], 
+  "--mode", "rpc", "--provider", PROVIDERS[0], "--model", MODELS[0], 
   "--no-tools", "--no-extensions", "--no-skills", "--no-context-files",
   "--system-prompt",
   flattenPrompt(AGENT_SYSTEM_PROMPT)
@@ -138,20 +138,30 @@ function spawnPi(extraArgs) {
   log("info", "spawning pi with args:", extraArgs.join(" "));
   piProcess = spawn("pi", extraArgs, /* { cwd: RPC_CWD } */);
   attachStdoutHandlers(piProcess);
-  piProcess.on("exit", (code, signal) => {
-    log("warn", `pi process exited code=${code} signal=${signal}`);
-    piProcess = null;
-    pendingRestartConfirm = false;
-    rpcResolveCallback = null;
-    lastAssistantMessage = null;
+
+  return new Promise((resolve, reject) => {
+    const BOOT_TIME = 2000;
+    let settled = false;
+    const fail = (err) => { if (!settled) { settled = true; reject(err); } };
+    const ok = () => { if (!settled) { settled = true; resolve(); } };
+
+    piProcess.on("exit", (code, signal) => {
+      log("warn", `pi process exited code=${code} signal=${signal}`);
+      piProcess = null;
+      pendingRestartConfirm = false;
+      rpcResolveCallback = null;
+      lastAssistantMessage = null;
+      if (code !== 0) fail(new Error(`pi exited with code ${code}${signal ? ` (signal ${signal})` : ""}`));
+    });
+    piProcess.stderr.on("data", (d) => {
+      log("error", "pi stderr:", d.toString());
+    });
+    piProcess.on("error", (err) => {
+      log("error", "pi process error:", err.message);
+      fail(err);
+    });
+    setTimeout(ok, BOOT_TIME);
   });
-  piProcess.stderr.on("data", (d) => {
-    log("error", "pi stderr:", d.toString());
-  });
-  piProcess.on("error", (err) => {
-    log("error", "pi process error:", err.message);
-  });
-  return piProcess;
 }
 
 function guardRestart() {
@@ -367,7 +377,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = request.params.arguments || {};
     const sessionNumber = args.session_number ?? 0;
     const sessionPath = resolveSessionNumber(sessionNumber);
-    const [pIdx, mIdx] = args.model_list_index ?? [0, 2];
+    const [pIdx, mIdx] = args.model_list_index ?? [1, 2];
     const provider = PROVIDERS[pIdx] ?? PROVIDERS[0];
     const model = MODELS[mIdx] ?? MODELS[0];
     const systemPrompt = args.system_prompt || flattenPrompt(AGENT_SYSTEM_PROMPT);
@@ -380,7 +390,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     ];
     if (args.no_session) extraArgs.push("--no-session");
     if (sessionPath) extraArgs.push("--session", sessionPath);
-    spawnPi(extraArgs);
+    try {
+      await spawnPi(extraArgs);
+    } catch (err) {
+      return { content: [{ type: "text", text: `Failed to start Pi: ${err.message}` }], isError: true };
+    }
     const info = sessionPath
       ? `reconnected to session ${sessionNumber} (${sessionPath})`
       : "fresh session";
@@ -405,7 +419,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const extraArgs = ["--mode", "rpc", ...parsedArgs];
     if (callArgs.no_session) extraArgs.push("--no-session");
     if (sessionPath) extraArgs.push("--session", sessionPath);
-    spawnPi(extraArgs);
+    try {
+      await spawnPi(extraArgs);
+    } catch (err) {
+      return { content: [{ type: "text", text: `Failed to start Pi: ${err.message}` }], isError: true };
+    }
     const info = sessionPath
       ? `reconnected to session ${sessionNumber} (${sessionPath})`
       : "fresh session";

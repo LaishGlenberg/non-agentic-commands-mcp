@@ -182,6 +182,25 @@ function ensurePiRunning() {
   }
 }
 
+// ── Text sanitizer ───────────────────────────────────────────────────────
+// Strips non-printable / non-regular text characters that can cause problems
+// with the Pi RPC protocol over stdio: newlines, carriage returns, tabs,
+// control characters, zero-width spaces, and other unusual Unicode.
+// Replaces problematic whitespace with a single space, collapses runs, trims.
+function sanitizeText(text) {
+  if (typeof text !== "string") return text;
+  return text
+    // Replace newlines, carriage returns, tabs with a space
+    .replace(/[\r\n\t\f\v]+/g, " ")
+    // Strip ASCII control characters (0x00-0x1F except tab/newline already handled, 0x7F DEL)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+    // Strip zero-width and weird Unicode whitespace
+    .replace(/[\u200B-\u200F\u2028\u2029\uFEFF\u00AD\u2060]/g, "")
+    // Collapse runs of whitespace into a single space
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // ── RPC helpers ──────────────────────────────────────────────────────────
 function formatAssistantContent(message, includeThinking = false) {
   if (!message || !Array.isArray(message.content)) return "";
@@ -377,10 +396,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = request.params.arguments || {};
     const sessionNumber = args.session_number ?? 0;
     const sessionPath = resolveSessionNumber(sessionNumber);
-    const [pIdx, mIdx] = args.model_list_index ?? [1, 2];
+    const [pIdx, mIdx] = args.model_list_index ?? [0, 0];
     const provider = PROVIDERS[pIdx] ?? PROVIDERS[0];
     const model = MODELS[mIdx] ?? MODELS[0];
-    const systemPrompt = args.system_prompt || flattenPrompt(AGENT_SYSTEM_PROMPT);
+    const systemPrompt = args.system_prompt ? sanitizeText(args.system_prompt) : flattenPrompt(AGENT_SYSTEM_PROMPT);
     const extraArgs = [
       "--mode", "rpc",
       "--provider", provider,
@@ -406,7 +425,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const warning = guardRestart();
     if (warning) return { content: [{ type: "text", text: warning }] };
     const callArgs = request.params.arguments || {};
-    const userArgs = (callArgs.args || "").trimStart();
+    const userArgs = sanitizeText(callArgs.args || "");
     const sessionNumber = callArgs.session_number ?? 0;
     const sessionPath = resolveSessionNumber(sessionNumber);
     // Split on whitespace, respecting quoted strings
@@ -433,7 +452,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // All tools below require pi to be already running
   if (request.params.name === "pi_agent_prompt") {
     const { text, include_thinking = false } = request.params.arguments;
-    const result = await sendRpc({ type: "prompt", message: text });
+    const result = await sendRpc({ type: "prompt", message: sanitizeText(text) });
     return {
       content: [{ type: "text", text: result ? formatAssistantContent(result, include_thinking) : "(no response)" }]
     };

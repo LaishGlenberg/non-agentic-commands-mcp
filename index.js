@@ -5,14 +5,19 @@ import spawn from "cross-spawn";
 import fs from "fs";
 import path from "path";
 import os from "os";
-
-
+import envPaths from "env-paths";
 
 // ── Log file ──────────────────────────────────────────────────────────────
 // Logs are written to a local file to avoid interfering with the MCP stdio
 // protocol. Set PI_MCP_LOG=error|warn|info|debug to enable levels.
-const LOG_FILE_DIR = path.join(os.homedir(), "tmp");
-const LOG_FILE_PATH = path.join(LOG_FILE_DIR, "non-agentic-commands-mcp-output");
+//
+// Log directory resolution:
+//   1. PI_MCP_LOG_DIR env var (set to "." for cwd, or any absolute path)
+//   2. Fallback: OS-appropriate log dir via env-paths
+const LOG_FILE_DIR = process.env.PI_MCP_LOG_DIR
+  ? path.resolve(process.env.PI_MCP_LOG_DIR)
+  : envPaths("non-agentic-commands-mcp").log;
+const LOG_FILE_PATH = path.join(LOG_FILE_DIR, "output.log");
 try { fs.mkdirSync(LOG_FILE_DIR, { recursive: true }); } catch {}
 const logStream = fs.createWriteStream(LOG_FILE_PATH, { flags: "a" });
 

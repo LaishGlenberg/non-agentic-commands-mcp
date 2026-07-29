@@ -26,6 +26,17 @@ function log(level, ...args) {
   }
 }
 
+// ── Crash guard ─────────────────────────────────────────────────────────────
+// Prevent uncaught errors from killing the server, which would cause pi to
+// spawn a fresh process on the next tool call (losing the pi subprocess).
+process.on("uncaughtException", (err) => {
+  logStream.write(`[pi-mcp:fatal] UNCAUGHT EXCEPTION: ${err.message}\n`);
+  if (err.stack) logStream.write(`[pi-mcp:fatal] STACK: ${err.stack.split("\n").slice(0, 6).join(" | ")}\n`);
+});
+process.on("unhandledRejection", (err) => {
+  logStream.write(`[pi-mcp:fatal] UNHANDLED REJECTION: ${err instanceof Error ? err.message : String(err)}\n`);
+});
+
 const server = new Server(
   { name: "non-agentic-commands-mcp", version: "1.0.0" },
   { capabilities: { tools: {} } }

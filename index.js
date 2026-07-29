@@ -4,7 +4,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import { log, logStream, LOG_FILE_PATH } from "./src/logger.js";
 import { state } from "./src/state.js";
 import {
-  AGENT_SYSTEM_PROMPT, PROVIDERS, MODELS, flattenPrompt, sanitizeText,
+  AGENT_SYSTEM_PROMPT, PROVIDERS, MODELS, DEFAULT_PI_ARGS, flattenPrompt, sanitizeText,
 } from "./src/config.js";
 import { spawnPi, guardRestart, ensurePiRunning, resolveSessionNumber } from "./src/pi-process.js";
 import { sendRpc, sendRpcRaw, formatAssistantContent } from "./src/rpc.js";
@@ -19,9 +19,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "start_session",
-      description: "Start a Pi session. " +
-        "Optionally reconnect to a previous session by number: 0 = new session (default), " +
-        "1 = most recent, 2 = second most recent, etc. Requires PI_SESSION_DIR env var for numbered lookups.",
+      description: "Optional: restart the Pi session with different settings or reconnect to a previous one. " +
+        "Pi starts automatically with defaults on server boot, so this is only needed for overrides. " +
+        "Session number: 0 = new (default), 1 = most recent, 2 = second most recent, etc. " +
+        "Requires PI_SESSION_DIR env var for numbered lookups.",
       inputSchema: {
         type: "object",
         properties: {
@@ -71,7 +72,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "pi_agent_prompt",
-      description: "Send a prompt to the running Pi session (start_session must be called first).",
+      description: "Send a prompt to the running Pi session (auto-started on server boot).",
       inputSchema: {
         type: "object",
         properties: {
@@ -86,7 +87,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "pi_agent_rpc",
-      description: "Send a raw RPC command to the running Pi session (start_session must be called first).",
+      description: "Send a raw RPC command to the running Pi session (auto-started on server boot).",
       inputSchema: {
         type: "object",
         properties: {
@@ -124,6 +125,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       name: "pi_session_new",
       description: "Start a fresh session in the running Pi daemon.",
       inputSchema: { type: "object", properties: {} }
+    },
+    {
+      name: "pi_set_model",
+      description: "Change the model/provider in the running Pi session.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          provider: {
+            type: "string",
+            description: "Provider name (e.g. anthropic, openai, deepseek)"
+          },
+          modelId: {
+            type: "string",
+            description: "Model ID (e.g. claude-sonnet-4-20250514, gpt-4o)"
+          }
+        },
+        required: ["provider", "modelId"]
+      }
     },
     {
       name: "export_html",
@@ -253,6 +272,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 
+  if (request.params.name === "pi_set_model") {
+    const { provider, modelId } = request.params.arguments;
+    const stream = await sendRpcRaw({ type: "set_model", provider, modelId });
+    const responseEvent = stream.find(e => e.type === "response" && e.command === "set_model");
+    const cancelled = responseEvent?.data?.cancelled;
+    return {
+      content: [{ type: "text", text: cancelled ? "Model change cancelled." : `Model set to ${provider}/${modelId}` }]
+    };
+  }
+
   if (request.params.name === "export_html") {
     const outputPath = request.params.arguments?.outputPath || "/tmp/session.html";
     const stream = await sendRpcRaw({ type: "export_html", outputPath });
@@ -269,5 +298,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // ── Bootstrap ────────────────────────────────────────────────────────────
 const transport = new StdioServerTransport();
 await server.connect(transport);
-log("info", "MCP server connected, awaiting tool calls");
-logStream.write("► Pi Agent MCP Server is active. Call start_session to begin.\n");
+log("info", "MCP server connected, starting Pi session...");
+logStream.write("► Pi Agent MCP Server is active. Auto-starting Pi session...\n");
+
+// Auto-start Pi session so agents can prompt immediately
+spawnPi(DEFAULT_PI_ARGS).catch((err) => {
+  log("error", "auto-start Pi failed:", err.message);
+  logStream.write(`[pi-mcp:error] Auto-start Pi session failed: ${err.message}\n`);
+});

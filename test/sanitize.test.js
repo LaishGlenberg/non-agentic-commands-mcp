@@ -18,7 +18,7 @@ async function runTest() {
 
   try {
     // ── 1. Connect client (StdioClientTransport spawns the server) ──
-    console.log("[1/4] Connecting to MCP server...");
+    console.log("[1/3] Connecting to MCP server...");
     transport = new StdioClientTransport({
       command: "node",
       args: [SERVER_SCRIPT],
@@ -33,30 +33,11 @@ async function runTest() {
     await client.connect(transport);
     console.log("  ✓ connected\n");
 
-    // ── 2. Start session with tencent/hy3 ───────────────────────────
-    console.log('[2/4] Starting Pi session (tencent/hy3)...');
-    const startResult = await client.callTool({
-      name: "start_session",
-      arguments: {
-        system_prompt: "you are a test agent, respond with hello only, no thinking",
-        session_number: 0,
-        no_session: true,
-        model_list_index: [1,2]
-      },
-    });
-
-    const startText = startResult.content?.[0]?.text || "(no content)";
-    console.log(`  → ${startText}`);
-    if (!startText.includes("Pi started")) {
-      throw new Error(`start_session failed: ${startText}`);
-    }
-    console.log("  ✓ session started\n");
-
-    // ── 3. Wait for Pi to initialize ────────────────────────────────
-    console.log("[3/4] Waiting for Pi to initialize...");
+    // ── 2. Wait for Pi to auto-initialize (server auto-starts on boot) ─
+    console.log("[2/3] Waiting for Pi to auto-initialize...");
     await sleep(5000);
 
-    // ── 4. Send a wonky prompt full of weird characters ─────────────
+    // ── 3. Send a wonky prompt full of weird characters ─────────────
     const wonkyText =
       "hello\n\n" +                              // newlines
       "line two\r\n" +                            // CRLF
@@ -71,7 +52,7 @@ async function runTest() {
       "form\u000Cfeed\n" +                        // form feed
       "  extra  spaces  ";                        // extra whitespace
 
-    console.log(`[4/4] Sending wonky text...`);
+    console.log("[3/3] Sending wonky text...");
     const promptResult = await client.callTool({
       name: "pi_agent_prompt",
       arguments: { text: wonkyText },

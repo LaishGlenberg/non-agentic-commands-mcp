@@ -4,18 +4,25 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import spawn from "cross-spawn";
 import fs from "fs";
 import path from "path";
+import os from "os";
 
 
 
-// ── Logger ──────────────────────────────────────────────────────────────────
-// Enable via PI_MCP_LOG=error|warn|info|debug. Logs to stderr to avoid
-// interfering with the MCP stdio protocol. Default: off.
+// ── Log file ──────────────────────────────────────────────────────────────
+// Logs are written to a local file to avoid interfering with the MCP stdio
+// protocol. Set PI_MCP_LOG=error|warn|info|debug to enable levels.
+const LOG_FILE_DIR = path.join(os.homedir(), "tmp");
+const LOG_FILE_PATH = path.join(LOG_FILE_DIR, "non-agentic-commands-mcp-output");
+try { fs.mkdirSync(LOG_FILE_DIR, { recursive: true }); } catch {}
+const logStream = fs.createWriteStream(LOG_FILE_PATH, { flags: "a" });
+
 const LOG_LEVELS = { off: 0, error: 1, warn: 2, info: 3, debug: 4 };
 const LOG_LEVEL = LOG_LEVELS[process.env.PI_MCP_LOG] ?? LOG_LEVELS.off;
 
 function log(level, ...args) {
   if (LOG_LEVELS[level] <= LOG_LEVEL) {
-    console.error(`[pi-mcp:${level}]`, ...args);
+    const msg = args.map(a => typeof a === "string" ? a : JSON.stringify(a)).join(" ");
+    logStream.write(`[pi-mcp:${level}] ${msg}\n`);
   }
 }
 
@@ -515,4 +522,4 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 const transport = new StdioServerTransport();
 await server.connect(transport);
 log("info", "MCP server connected, awaiting tool calls");
-console.error("► Pi Agent MCP Server is active. Call start_session to begin.");
+logStream.write("► Pi Agent MCP Server is active. Call start_session to begin.\n");

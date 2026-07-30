@@ -310,7 +310,11 @@ log("info", "MCP server connected, starting Pi session...");
 logStream.write("► Pi Agent MCP Server is active. Auto-starting Pi session...\n");
 
 // Auto-start Pi session so agents can prompt immediately
-spawnPi(DEFAULT_PI_ARGS).catch((err) => {
+spawnPi(DEFAULT_PI_ARGS).then(() => {
+  // Warm-up: fire-and-forget prompt so session is initialized before first real request
+  // Reduces latency on the first real prompt by pre-loading the model
+  sendRpc({ type: "prompt", message: "this is a test, say hello" }).catch(() => {});
+}).catch((err) => {
   log("error", "auto-start Pi failed:", err.message);
   logStream.write(`[pi-mcp:error] Auto-start Pi session failed: ${err.message}\n`);
 });

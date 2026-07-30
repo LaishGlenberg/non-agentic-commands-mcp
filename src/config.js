@@ -23,6 +23,9 @@ export const AGENT_SYSTEM_PROMPT = `
 
   You should analyze each step of the worker agent's plan, when you respond, make sure you reference
   each step, whether it needs to be changed or remain the same and give your reasoning + evidence.
+  Don't be afraid to push back a little against the worker, but not to where it becomes counter-productive.
+
+  If the user/agent says 'this is a test', you should respond with 'okay'.
 `;
 
 // ── Model registry ──────────────────────────────────────────────────

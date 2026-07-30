@@ -134,11 +134,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           provider: {
             type: "string",
-            description: "Provider name (e.g. anthropic, openai, deepseek)"
+            description: "Provider name (e.g. tencent, openai, deepseek)"
           },
           modelId: {
             type: "string",
-            description: "Model ID (e.g. claude-sonnet-4-20250514, gpt-4o)"
+            description: "Model ID (e.g. deepseek/deepseek-v4-pro, deepseek/deepseek-v4-flash, tencent/hy3)"
           }
         },
         required: ["provider", "modelId"]
@@ -274,11 +274,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   if (request.params.name === "pi_set_model") {
     const { provider, modelId } = request.params.arguments;
+    log("info", `pi_set_model: provider=${provider}, modelId=${modelId}`);
     const stream = await sendRpcRaw({ type: "set_model", provider, modelId });
+    log("info", "pi_set_model raw stream:", JSON.stringify(stream));
     const responseEvent = stream.find(e => e.type === "response" && e.command === "set_model");
-    const cancelled = responseEvent?.data?.cancelled;
+    log("info", "pi_set_model responseEvent:", JSON.stringify(responseEvent));
+    if (!responseEvent) {
+      return { content: [{ type: "text", text: `No response from model change command. Raw events: ${JSON.stringify(stream.slice(0, 3))}` }], isError: true };
+    }
+    if (!responseEvent.success) {
+      return { content: [{ type: "text", text: `Model change failed: ${responseEvent.error || "unknown error"}` }], isError: true };
+    }
     return {
-      content: [{ type: "text", text: cancelled ? "Model change cancelled." : `Model set to ${provider}/${modelId}` }]
+      content: [{ type: "text", text: `Model set to ${provider}/${modelId}` }]
     };
   }
 

@@ -9,7 +9,7 @@ import envPaths from "env-paths";
 // Log directory resolution:
 //   1. PI_MCP_LOG_DIR env var (set to "." for cwd, or any absolute path)
 //   2. Fallback: OS-appropriate log dir via env-paths
-const LOG_FILE_DIR = process.env.PI_MCP_LOG_DIR
+const LOG_FILE_DIR = "c:/Users/lglen/tmp/non-agentic-commands-mcp"
   ? path.resolve(process.env.PI_MCP_LOG_DIR)
   : envPaths("non-agentic-commands-mcp").log;
 const LOG_FILE_PATH = path.join(LOG_FILE_DIR, "output.log");

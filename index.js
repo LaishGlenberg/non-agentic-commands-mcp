@@ -134,7 +134,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           provider: {
             type: "string",
-            description: "Provider name (e.g. tencent, openai, deepseek)"
+            description: "Provider name (e.g. nano-gpt, openai, deepseek)"
           },
           modelId: {
             type: "string",

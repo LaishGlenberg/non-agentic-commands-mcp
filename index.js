@@ -8,6 +8,7 @@ import {
 } from "./src/config.js";
 import { spawnPi, guardRestart, ensurePiRunning, resolveSessionNumber } from "./src/pi-process.js";
 import { sendRpc, sendRpcRaw, formatAssistantContent } from "./src/rpc.js";
+import { callGemini } from "./scripts/call-gemini.js";
 
 const server = new Server(
   { name: "non-agentic-commands-mcp", version: "1.0.0" },
@@ -157,6 +158,33 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           }
         }
       }
+    },
+    {
+      name: "call_gemini",
+      description: "Call a Google Gemini model directly via Google GenAI API. Use for quick queries without starting a Pi session. Default model is gemini-3.1-flash-lite with Google Search enabled.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          prompt: {
+            type: "string",
+            description: "The prompt to send to the model."
+          },
+          model_id: {
+            type: "string",
+            description: "Model ID (default: gemini-3.1-flash-lite)"
+          },
+          tools: {
+            type: "array",
+            items: { type: "object" },
+            description: "Tools to enable (default: Google Search). Pass empty array to disable."
+          },
+          persist_session: {
+            type: "boolean",
+            description: "Whether to persist the session (default: true)"
+          }
+        },
+        required: ["prompt"]
+      }
     }
   ]
 }));
@@ -297,6 +325,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return {
       content: [{ type: "text", text: cancelled ? "HTML export cancelled." : `Session exported to: ${outputPath}` }]
     };
+  }
+
+  if (request.params.name === "call_gemini") {
+    const { prompt, model_id, tools, persist_session } = request.params.arguments;
+    
+    if (!process.env.GEMINI_API_KEY) {
+      return { content: [{ type: "text", text: "Error: GEMINI_API_KEY environment variable is not set." }], isError: true };
+    }
+    
+    try {
+      const result = await callGemini({
+        prompt,
+        model_id,
+        tools,
+        persist_session
+      });
+      return { content: [{ type: "text", text: result || "(no response)" }] };
+    } catch (err) {
+      log("error", "call_model error:", err.message);
+      return { content: [{ type: "text", text: `Model call failed: ${err.message}` }], isError: true };
+    }
   }
 
   log("error", `tool not found: ${request.params.name}`);

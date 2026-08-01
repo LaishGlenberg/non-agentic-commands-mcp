@@ -3,7 +3,7 @@ import 'dotenv/config';
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-async function callModel({
+export async function callGemini({
   prompt="When was chalk invented?", 
   model_id="gemini-3.1-flash-lite", 
   tools=[{ type: "google_search" }],
@@ -18,7 +18,7 @@ async function callModel({
       thinking_level: "minimal"
     }
   });
-  console.log(interaction.output_text);
+  return interaction.output_text;
 }
 
-callModel({prompt: "where can I find updated documentation on pi agent packages?"});
+// callGemini({prompt: "where can I find updated documentation on pi agent packages?"});

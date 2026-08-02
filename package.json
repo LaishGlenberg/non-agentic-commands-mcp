@@ -16,6 +16,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "cross-spawn": "^7.0.6",
     "dotenv": "^17.4.2",
-    "env-paths": "^4.0.0"
+    "env-paths": "^4.0.0",
+    "openai": "^7.3.0"
   }
 }
